@@ -32,13 +32,15 @@ import threading
 from .response import *
 from .httpadapter import HttpAdapter
 from .dictionary import CaseInsensitiveDict
+import random
+_RR_INDEX = {}
 
 #: A dictionary mapping hostnames to backend IP and port tuples.
 #: Used to determine routing targets for incoming requests.
 PROXY_PASS = {
-    "10.0.212.119:8080": ('10.0.212.119', 9000),
-    "app1.local": ('10.0.212.119', 9001),
-    "app2.local": ('10.0.212.119', 9002),
+    "10.0.19.29:8080": ('10.0.19.29', 9000),
+    "app1.local": ('10.0.19.29', 9001),
+    "app2.local": ('10.0.19.29', 9002),
 }
 
 
@@ -106,15 +108,24 @@ def resolve_routing_policy(hostname, routes):
             # Use a dummy host to raise an invalid connection
             proxy_host = '127.0.0.1'
             proxy_port = '9000'
-        elif len(value) == 1:
+        elif len(proxy_map) == 1:
             proxy_host, proxy_port = proxy_map[0].split(":", 2)
-        #elif: # apply the policy handling 
-        #   proxy_map
-        #   policy
-        else:
-            # Out-of-handle mapped host
-            proxy_host = '127.0.0.1'
-            proxy_port = '9000'
+        elif len(proxy_map) >= 2:
+            print("[Proxy] resolve route of hostname {} with policy {}".format(hostname, policy))
+            if policy == 'round-robin':
+                global _RR_INDEX
+                index = _RR_INDEX.get(hostname, 0)
+                proxy_host, proxy_port = proxy_map[index].split(":", 2)
+                index = (index + 1) % len(proxy_map)
+                _RR_INDEX[hostname] = index
+            elif policy == 'random':
+                selected = random.choice(proxy_map)
+                proxy_host, proxy_port = selected.split(":", 2)
+            else:
+                print("[Proxy] Unknown policy {}, using default host".format(policy))
+                # Out-of-handle mapped host
+                proxy_host = '127.0.0.1' 
+                proxy_port = '9000'
     else:
         print("[Proxy] resolve route of hostname {} is a singulair to".format(hostname))
         proxy_host, proxy_port = proxy_map.split(":", 2)
@@ -142,10 +153,15 @@ def handle_client(ip, port, conn, addr, routes):
 
     request = conn.recv(1024).decode()
 
-    # Extract hostname
+    # Extract hostname (strip optional port, e.g. "app1.local:8080" -> "app1.local")
+    hostname = None
     for line in request.splitlines():
         if line.lower().startswith('host:'):
             hostname = line.split(':', 1)[1].strip()
+            # If Host header includes port, remove it for route lookup
+            if ':' in hostname:
+                hostname = hostname.split(':', 1)[0].strip()
+            break
 
     print("[Proxy] {} at Host: {}".format(addr, hostname))
 

@@ -112,29 +112,42 @@ class Request():
             #
 
         self.headers = self.prepare_headers(request)
-        cookies = self.headers.get('cookie', '')
-            #
-            #  TODO: implement the cookie function here
-            #        by parsing the header            #
+        # Extract body (if any) after the header section
+        parts = request.split('\r\n\r\n', 1)
+        if len(parts) > 1:
+            self.body = parts[1]
+        else:
+            self.body = ''
+
+        # Parse Cookie header into a dict
+        cookie_header = self.headers.get('cookie', '')
+        cookies = {}
+        if cookie_header:
+            for pair in cookie_header.split(';'):
+                if '=' in pair:
+                    k, v = pair.strip().split('=', 1)
+                    cookies[k] = v
+        self.cookies = cookies
 
         return
 
     def prepare_body(self, data, files, json=None):
+        # Store provided body data and update Content-Length
+        self.body = data
         self.prepare_content_length(self.body)
-        self.body = body
-        #
         # TODO prepare the request authentication
-        #
-	# self.auth = ...
+        # self.auth = ...
         return
 
 
     def prepare_content_length(self, body):
-        self.headers["Content-Length"] = "0"
-        #
+        try:
+            length = len(body) if body is not None else 0
+        except Exception:
+            length = 0
+        self.headers["Content-Length"] = str(length)
         # TODO prepare the request authentication
-        #
-	# self.auth = ...
+        # self.auth = ...
         return
 
 

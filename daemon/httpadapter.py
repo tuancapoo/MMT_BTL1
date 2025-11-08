@@ -23,6 +23,8 @@ Request and Response objects to handle client-server communication.
 from .request import Request
 from .response import Response
 from .dictionary import CaseInsensitiveDict
+import os
+from urllib.parse import parse_qs, unquote_plus
 
 class HttpAdapter:
     """
@@ -105,6 +107,97 @@ class HttpAdapter:
         # Handle the request
         msg = conn.recv(1024).decode()
         req.prepare(msg, routes)
+
+
+        # --- Simple authentication handling (Task 1A) ---
+        # Protect index page(s): require Cookie: auth=true
+        requested_path = req.path
+        # normalize root
+        if requested_path == '/':
+            requested_path = '/index.html'
+
+        # helper to check auth cookie
+        def is_authenticated(request):
+            try:
+                return request.cookies.get('auth', '') == 'true'
+            except Exception:
+                return False
+        # Serve GET /login -> show login form
+        if req.method == 'GET' and req.path == '/login':
+            login_path = os.path.join(os.getcwd(), 'www', 'login.html')
+            try:
+                with open(login_path, 'rb') as f:
+                    body = f.read()
+            except Exception:
+                body = b"<h1>Login</h1>"
+
+            hdr = (
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/html\r\n"
+                f"Content-Length: {len(body)}\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+            ).encode('utf-8')
+            conn.sendall(hdr + body)
+            conn.close()
+            return
+
+        # If requesting any path other than /login and not authenticated -> redirect to /login
+        if req.path != '/login' and not is_authenticated(req):
+            body = b"<h1>401 Unauthorized"
+            hdr = (
+                "HTTP/1.1 401 Unauthorized\r\n"
+                "Content-Type: text/html\r\n"
+                f"Content-Length: {len(body)}\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+            ).encode('utf-8')
+            conn.sendall(hdr + body)
+            conn.close()
+            return
+
+        # Handle POST /login explicitly
+        if req.method == 'POST' and req.path == '/login':
+            # parse form encoded body (username=...&password=...)
+            form = {}
+            if req.body:
+                try:
+                    form = {k: v[0] for k, v in parse_qs(req.body).items()}
+                except Exception:
+                    form = {}
+
+            username = form.get('username', '')
+            password = form.get('password', '')
+
+            if username == 'admin' and password == 'password':
+                # Successful login: set cookie and redirect to index
+                # Redirect to root '/' (server maps '/' to '/index.html')
+                hdr = (
+                    "HTTP/1.1 302 Found\r\n"
+                    "Content-Type: text/html\r\n"
+                    "Set-Cookie: auth=true; Path=/\r\n"
+                    "Location: /\r\n"
+                    "Content-Length: 0\r\n"
+                    "Connection: close\r\n"
+                    "\r\n"
+                ).encode('utf-8')
+
+                conn.sendall(hdr)
+                conn.close()
+                return
+            else:
+                # Invalid credentials
+                body = b"<h1>401 Unauthorized - invalid credentials</h1>"
+                hdr = (
+                    "HTTP/1.1 401 Unauthorized\r\n"
+                    "Content-Type: text/html\r\n"
+                    f"Content-Length: {len(body)}\r\n"
+                    "Connection: close\r\n"
+                    "\r\n"
+                ).encode('utf-8')
+                conn.sendall(hdr + body)
+                conn.close()
+                return
 
         # Handle request hook
         if req.hook:

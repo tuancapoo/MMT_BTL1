@@ -275,9 +275,20 @@ class Response():
             #        header from the provied headers
             #
         ######IMPLEMENT######################
+
         #Tạo fmt_header từ dictionary headers
-        status_line = "HTTP/1.1 200 OK\r\n"
-        #Lặp qua dictionary headers để tạo mỗi dòng dạng Key: Value\r\n.
+
+        status_code = getattr(self, 'status_code', 200) or 200
+        reason = self.reason or (
+            "OK" if status_code == 200 else
+            "Unauthorized" if status_code == 401 else
+            "Not Found" if status_code == 404 else
+            "Internal Server Error"
+        )
+        status_line = f"HTTP/1.1 {status_code} {reason}\r\n"
+
+        
+        # Lặp qua dictionary headers để tạo mỗi dòng dạng Key: Value\r\n.
         header_lines = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
         fmt_header = status_line + header_lines + "\r\n"
         ####################################

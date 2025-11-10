@@ -38,7 +38,7 @@ _RR_INDEX = {}
 #: A dictionary mapping hostnames to backend IP and port tuples.
 #: Used to determine routing targets for incoming requests.
 PROXY_PASS = {
-    "10.0.19.29:8080": ('10.0.19.29', 9000),
+    "10.0.255.132:8080": ('10.0.255.132', 9000),
     "app1.local": ('10.0.19.29', 9001),
     "app2.local": ('10.0.19.29', 9002),
 }
@@ -109,7 +109,12 @@ def resolve_routing_policy(hostname, routes):
             proxy_host = '127.0.0.1'
             proxy_port = '9000'
         elif len(proxy_map) == 1:
+            # proxy_map is a single entry list
+            # Example: ["10.0.19.29:9000"]
+            # => proxy_host = "10.0.19.29"
+            # => proxy_port = "9000"
             proxy_host, proxy_port = proxy_map[0].split(":", 2)
+            
         elif len(proxy_map) >= 2:
             print("[Proxy] resolve route of hostname {} with policy {}".format(hostname, policy))
             if policy == 'round-robin':
@@ -153,28 +158,38 @@ def handle_client(ip, port, conn, addr, routes):
 
     request = conn.recv(1024).decode()
 
-    # Extract hostname (strip optional port, e.g. "app1.local:8080" -> "app1.local")
-    hostname = None
+    # Extract Host header (keep original value, we'll test variants)
+    host_header = None
     for line in request.splitlines():
         if line.lower().startswith('host:'):
-            hostname = line.split(':', 1)[1].strip()
-            # If Host header includes port, remove it for route lookup
-            if ':' in hostname:
-                hostname = hostname.split(':', 1)[0].strip()
+            host_header = line.split(':', 1)[1].strip()
             break
 
-    print("[Proxy] {} at Host: {}".format(addr, hostname))
+    # Normalize variants: full header (may include port), host without port,
+    # and host combined with the proxy listen port (useful when client omits port)
+    hostname_full = host_header
+    hostname_noport = hostname_full.split(':', 1)[0].strip() if hostname_full else None
+    hostname_with_listen = f"{hostname_noport}:{port}" if hostname_noport else None
 
-    # Resolve the matching destination in routes and need conver port
-    # to integer value
-    resolved_host, resolved_port = resolve_routing_policy(hostname, routes)
+    print("[Proxy] {} at Host: {}".format(addr, host_header))
+
+    # Try lookup in routes with priority: exact header, host:listen_port, host without port
+    if hostname_full and hostname_full in routes:
+        lookup_key = hostname_full
+    elif hostname_with_listen and hostname_with_listen in routes:
+        lookup_key = hostname_with_listen
+    else:
+        lookup_key = hostname_noport
+
+    # Resolve the matching destination in routes and convert port to int
+    resolved_host, resolved_port = resolve_routing_policy(lookup_key, routes)
     try:
         resolved_port = int(resolved_port)
     except ValueError:
         print("Not a valid integer")
 
     if resolved_host:
-        print("[Proxy] Host name {} is forwarded to {}:{}".format(hostname,resolved_host, resolved_port))
+        print("[Proxy] Host name {} is forwarded to {}:{}".format(lookup_key, resolved_host, resolved_port))
         response = forward_request(resolved_host, resolved_port, request)        
     else:
         response = (

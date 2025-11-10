@@ -17,6 +17,7 @@ daemon.request
 This module provides a Request object to manage and persist 
 request settings (cookies, auth, proxies).
 """
+from daemon.utils import get_auth_from_url
 from .dictionary import CaseInsensitiveDict
 
 class Request():
@@ -67,6 +68,16 @@ class Request():
         self.hook = None
 
     def extract_request_line(self, request):
+        """
+        Tách dòng đầu tiên trong request để lấy:
+        +HTTP method
+        +path (đường dẫn) (Nếu / thì mặc định là /index.html)
+        +version (HTTP/1.1, HTTP/2.0, …)
+        Example: GET / HTTP/1.1
+        => method = GET
+        => path = /index.html
+        => version = HTTP/1.1
+        """
         try:
             lines = request.splitlines()
             first_line = lines[0]
@@ -80,10 +91,22 @@ class Request():
         return method, path, version
              
     def prepare_headers(self, request):
-        """Prepares the given HTTP headers."""
+        """Tách phần header trong request thành dictionary."""
+        """ 
+        Example:
+        req = "
+        GET /index.html HTTP/1.1\r\n
+        Host: localhost\r\n
+        User-Agent: curl/7.64.1\r\n\r\n"
+        returns {
+            'host': 'localhost',
+            'user-agent': 'curl/7.64.1'
+        }
+        """
         lines = request.split('\r\n')
+        #Tách request thành các dòng
         headers = {}
-        for line in lines[1:]:
+        for line in lines[1:]:#Bắt đầu từ dòng thứ 2 bỏ qua request line
             if ': ' in line:
                 key, val = line.split(': ', 1)
                 headers[key.lower()] = val
@@ -91,8 +114,43 @@ class Request():
 
     def prepare(self, request, routes=None):
         """Prepares the entire request with the given parameters."""
+        """ 
+        Phân tích toàn bộ request HTTP raw text, gồm:
+            +request line
+            +headers
+            +body
+            +cookies
+            và gắn route handler nếu có.
+        Example:
+        raw_request = (
+            "POST /login HTTP/1.1\r\n"
+            "Host: example.com\r\n"
+            "Cookie: sessionid=abc123; theme=dark\r\n"
+            "Content-Type: application/x-www-form-urlencoded\r\n"
+            "\r\n"
+            "username=admin&password=1234"
+        )
+        req = Request()
+        req.prepare(raw_request, routes={('POST', '/login'): login_handler})
+        returns Request object with:
+            method = 'POST'
+            path = '/login'
+            version = 'HTTP/1.1'
+            headers = {
+                'host': 'example.com',
+                'cookie': 'sessionid=abc123; theme=dark',
+                'content-type': 'application/x-www-form-urlencoded'
+            }
+            body = 'username=admin&password=1234'
+            cookies = {
+                'sessionid': 'abc123',
+                'theme': 'dark'
+            }
+            hook = login_handler
+        """
+    
 
-        # Prepare the request line from the request header
+        # Tách request line:
         self.method, self.path, self.version = self.extract_request_line(request)
         print("[Request] {} path {} version {}".format(self.method, self.path, self.version))
 
@@ -103,6 +161,7 @@ class Request():
         # TODO manage the webapp hook in this mounting point
         #
         
+        # Xử lý routes nếu có
         if not routes == {}:
             self.routes = routes
             self.hook = routes.get((self.method, self.path))
@@ -110,16 +169,16 @@ class Request():
             # self.hook manipulation goes here
             # ...
             #
-
+        # Tách headers
         self.headers = self.prepare_headers(request)
-        # Extract body (if any) after the header section
+        # Tách body nếu có
         parts = request.split('\r\n\r\n', 1)
         if len(parts) > 1:
             self.body = parts[1]
         else:
             self.body = ''
 
-        # Parse Cookie header into a dict
+        # Phân tích cookies nếu có
         cookie_header = self.headers.get('cookie', '')
         cookies = {}
         if cookie_header:
@@ -156,7 +215,8 @@ class Request():
         # TODO prepare the request authentication
         #
 	# self.auth = ...
-        return
+        self.auth = get_auth_from_url(url) if url else auth
+        return self.auth
 
     def prepare_cookies(self, cookies):
             self.headers["Cookie"] = cookies
